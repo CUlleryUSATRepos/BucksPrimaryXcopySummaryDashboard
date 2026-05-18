@@ -14,6 +14,7 @@ GEOGRAPHIES = {
         "party_file": "county_party_counts.csv",
         "turnout_file": "county_turnout_2025.csv",
         "switcher_file": "county_party_switchers_enriched.csv",
+        "participation_file": "county_participation_since_2020.csv",
         "key": "county",
         "display": "county",
     },
@@ -22,6 +23,7 @@ GEOGRAPHIES = {
         "party_file": "municipality_party_counts.csv",
         "turnout_file": "municipality_turnout_2025.csv",
         "switcher_file": "municipality_party_switchers_enriched.csv",
+        "participation_file": "municipality_participation_since_2020.csv",
         "key": "municipality",
         "display": "municipality",
     },
@@ -30,6 +32,7 @@ GEOGRAPHIES = {
         "party_file": "polling_place_party_counts.csv",
         "turnout_file": "polling_place_turnout_2025.csv",
         "switcher_file": "polling_place_party_switchers_enriched.csv",
+        "participation_file": "polling_place_participation_since_2020.csv",
         "key": "polling_place_key",
         "display": "polling_place",
     },
@@ -38,6 +41,7 @@ GEOGRAPHIES = {
         "party_file": "precinct_split_party_counts.csv",
         "turnout_file": "precinct_split_turnout_2025.csv",
         "switcher_file": None,
+        "participation_file": "precinct_split_participation_since_2020.csv",
         "key": "precinct_split_id",
         "display": "precinct_split_id",
     },
@@ -46,6 +50,7 @@ GEOGRAPHIES = {
         "party_file": "state_house_party_counts.csv",
         "turnout_file": "state_house_turnout_2025.csv",
         "switcher_file": "state_house_party_switchers_enriched.csv",
+        "participation_file": "state_house_participation_since_2020.csv",
         "key": "state_house",
         "display": "state_house",
     },
@@ -54,6 +59,7 @@ GEOGRAPHIES = {
         "party_file": "state_senate_party_counts.csv",
         "turnout_file": "state_senate_turnout_2025.csv",
         "switcher_file": "state_senate_party_switchers_enriched.csv",
+        "participation_file": "state_senate_participation_since_2020.csv",
         "key": "state_senate",
         "display": "state_senate",
     },
@@ -76,6 +82,25 @@ def clean_value(value):
 
 def row_to_dict(row):
     return {k: clean_value(v) for k, v in row.items()}
+
+
+def normalize_match_value(value):
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip().upper()
+
+
+def find_matching_row(df, key, key_value):
+    if df is None or key not in df.columns:
+        return None
+
+    target = normalize_match_value(key_value)
+    matches = df[df[key].map(normalize_match_value) == target]
+
+    if matches.empty:
+        return None
+
+    return row_to_dict(matches.iloc[0])
 
 
 def fmt_int(value):
@@ -118,17 +143,208 @@ def party_leader(row):
     return "Democrats and Republicans are tied"
 
 
-def build_summary(geo_label, party_row, turnout_row=None, switcher_row=None):
-    name = party_row.get("_display_name") or party_row.get("_key_value") or "This geography"
+def geography_noun(geo_label):
+    label = str(geo_label).strip().lower()
+
+    if label == "county":
+        return "county"
+    if label == "municipality":
+        return "municipality"
+    if label == "polling place":
+        return "polling place"
+    if label == "precinct":
+        return "precinct"
+    if label == "state house":
+        return "state House district"
+    if label == "state senate":
+        return "state Senate district"
+
+    return label
+
+
+def place_turnout_phrase(geo_label, name):
+    noun = geography_noun(geo_label)
+
+    if noun == "county":
+        return f"{name} voters"
+    if noun == "municipality":
+        return f"voters in {name}"
+    if noun == "polling place":
+        return "voters assigned to this polling place"
+    if noun == "precinct":
+        return "voters in this precinct"
+    if noun == "state House district":
+        return "voters in this state House district"
+    if noun == "state Senate district":
+        return "voters in this state Senate district"
+
+    return f"voters in {name}"
+
+
+def place_registration_phrase(geo_label, name):
+    noun = geography_noun(geo_label)
+
+    if noun == "county":
+        return "The county"
+    if noun == "polling place":
+        return "The polling place"
+    if noun == "state House district":
+        return "The state House district"
+    if noun == "state Senate district":
+        return "The state Senate district"
+    if noun == "precinct":
+        return "The precinct"
+    if noun == "municipality":
+        return "The municipality"
+
+    return "The area"
+
+
+def registered_voter_phrase(geo_label):
+    noun = geography_noun(geo_label)
+
+    if noun == "polling place":
+        return "registered voters assigned to it"
+
+    return "registered voters"
+
+
+def margin_strength(abs_margin_pct):
+    if abs_margin_pct is None or pd.isna(abs_margin_pct):
+        return ""
+
+    abs_margin_pct = abs(float(abs_margin_pct))
+
+    if abs_margin_pct < 2:
+        return "narrow "
+    if abs_margin_pct < 5:
+        return "modest "
+    if abs_margin_pct < 10:
+        return "clear "
+    return "wide "
+
+
+def switch_count(row, col):
+    value = row.get(col)
+    if value is None or pd.isna(value):
+        return 0
+    return int(round(float(value)))
+
+
+def net_result_phrase(value):
+    if value > 0:
+        return f"net increase of {value:,} voters"
+    if value < 0:
+        return f"net loss of {abs(value):,}"
+    return "no net change"
+
+
+def build_switcher_sentence(switcher_row):
+    if not switcher_row:
+        return None
+
+    total_switch = switch_count(switcher_row, "total_switch")
+
+    d_to_r = switch_count(switcher_row, "D_to_R")
+    d_to_oth = switch_count(switcher_row, "D_to_Oth")
+
+    r_to_d = switch_count(switcher_row, "R_to_D")
+    r_to_oth = switch_count(switcher_row, "R_to_Oth")
+
+    oth_to_d = switch_count(switcher_row, "Oth_to_D")
+    oth_to_r = switch_count(switcher_row, "Oth_to_R")
+
+    d_net = switch_count(switcher_row, "D_net")
+    r_net = switch_count(switcher_row, "R_net")
+    oth_net = switch_count(switcher_row, "Oth_net")
+
+    if total_switch == 0:
+        return (
+            "Since the 2024 presidential election, no voters moved between the Democratic, "
+            "Republican and third-party or unaffiliated registration categories."
+        )
+
+    r_gain = d_to_r + oth_to_r
+    r_loss = r_to_d + r_to_oth
+
+    d_gain = r_to_d + oth_to_d
+    d_loss = d_to_r + d_to_oth
+
+    oth_gain = d_to_oth + r_to_oth
+    oth_loss = oth_to_d + oth_to_r
+
+    return (
+        f"Since the 2024 presidential election, {total_switch:,} voters moved between Democratic, "
+        f"Republican and third-party or unaffiliated registration categories. "
+        f"Republicans had the largest net gain, adding {r_gain:,} voters from other categories "
+        f"while losing {r_loss:,}, for a {net_result_phrase(r_net)}. "
+        f"Democrats added {d_gain:,} voters but lost {d_loss:,}, for a {net_result_phrase(d_net)}. "
+        f"Third-party and unaffiliated voters added {oth_gain:,} and lost {oth_loss:,}, "
+        f"for a {net_result_phrase(oth_net)}."
+    )
+
+
+def build_participation_sentence(geo_label, name, participation_row=None):
+    if not participation_row:
+        return None
+
+    registration_year = participation_row.get("registration_year")
+    reg_d = participation_row.get("registered_current_year_D")
+    reg_r = participation_row.get("registered_current_year_R")
+    reg_oth = participation_row.get("registered_current_year_Oth")
+    reg_total = participation_row.get("registered_current_year_total")
+
+    participation_pct = participation_row.get("participation_pct")
+    primary_pct = participation_row.get("primary_participation_pct")
+    general_pct = participation_row.get("general_participation_pct")
+    midterm_primary_pct = participation_row.get("midterm_primary_participation_pct")
+
+    if registration_year is None or pd.isna(registration_year):
+        registration_year = "this year"
+    else:
+        registration_year = int(registration_year)
+
+    registration_sentence = (
+        f"Since Jan. 1, {fmt_int(reg_total)} voters in this category have registered for the first time "
+        f"in Pennsylvania, including {fmt_int(reg_d)} Democrats, {fmt_int(reg_r)} Republicans and "
+        f"{fmt_int(reg_oth)} third-party or unaffiliated voters."
+    )
+
+    if geography_noun(geo_label) == "county":
+        registration_sentence = (
+            f"Since Jan. 1, {fmt_int(reg_total)} voters have registered for the first time in Pennsylvania "
+            f"and are now registered in Bucks County, including {fmt_int(reg_d)} Democrats, "
+            f"{fmt_int(reg_r)} Republicans and {fmt_int(reg_oth)} third-party or unaffiliated voters."
+        )
+
+    participation_sentence = (
+        f"According to voter-file history, currently registered voters here participated in "
+        f"{fmt_pct(midterm_primary_pct)} of the midterm primaries since 2020 for which they were registered early enough to vote. "
+        f"Overall, those voters participated in {fmt_pct(participation_pct)} of eligible elections since 2020, "
+        f"with higher participation in general elections at {fmt_pct(general_pct)} and lower participation "
+        f"in primaries at {fmt_pct(primary_pct)}."
+    )
+
+    if geography_noun(geo_label) == "county":
+        participation_sentence = (
+            f"According to voter-file history, currently registered Bucks County voters participated in "
+            f"{fmt_pct(midterm_primary_pct)} of the midterm primaries since 2020 for which they were registered early enough to vote. "
+            f"Overall, those voters participated in {fmt_pct(participation_pct)} of eligible elections since 2020, "
+            f"with higher participation in general elections at {fmt_pct(general_pct)} and lower participation "
+            f"in primaries at {fmt_pct(primary_pct)}."
+        )
+
+    return registration_sentence + "\n\n" + participation_sentence
+
+
+def build_summary(geo_label, party_row, turnout_row=None, switcher_row=None, participation_row=None):
+    name = party_row.get("_display_name") or party_row.get("_key_value") or "This area"
+    noun = geography_noun(geo_label)
 
     total = fmt_int(party_row.get("total_voters"))
     d_count = fmt_int(party_row.get("D"))
     r_count = fmt_int(party_row.get("R"))
     oth_count = fmt_int(party_row.get("Oth"))
-
-    d_pct = fmt_pct(party_row.get("D_pct"))
-    r_pct = fmt_pct(party_row.get("R_pct"))
-    oth_pct = fmt_pct(party_row.get("Oth_pct"))
 
     dvr = party_row.get("DvR")
     dvr_pct = party_row.get("DvR_pct")
@@ -136,46 +352,76 @@ def build_summary(geo_label, party_row, turnout_row=None, switcher_row=None):
     leader = party_leader(party_row)
 
     if leader == "Democrats and Republicans are tied":
+        lead_sentence = (
+            f"{name} has {total} {registered_voter_phrase(geo_label)}, "
+            f"with Democrats and Republicans tied in registration, according to state voter registration data."
+        )
         margin_sentence = (
-            f"Democrats and Republicans are tied in registration here, "
-            f"with a D-vs.-R margin of {fmt_signed_int(dvr)} voters."
+            f"{place_registration_phrase(geo_label, name)} has {r_count} registered Republicans, "
+            f"{d_count} Democrats and {oth_count} third-party or unaffiliated voters."
         )
     elif leader == "Democrats":
+        strength = margin_strength(abs(dvr_pct))
+        lead_sentence = (
+            f"{name} has {total} {registered_voter_phrase(geo_label)}, "
+            f"with Democrats holding a {strength}registration edge over Republicans, according to state voter registration data."
+        )
         margin_sentence = (
-            f"Democrats have a registration advantage of {fmt_int(abs(dvr))} voters over Republicans, "
-            f"equal to {fmt_signed_pct(dvr_pct)} percentage points of the electorate."
+            f"{place_registration_phrase(geo_label, name)} has {d_count} registered Democrats, "
+            f"{r_count} Republicans and {oth_count} third-party or unaffiliated voters. "
+            f"Democrats' advantage stands at {fmt_int(abs(dvr))} voters, or {float(abs(dvr_pct)):.1f} percentage points."
         )
     else:
+        strength = margin_strength(abs(dvr_pct))
+        lead_sentence = (
+            f"{name} has {total} {registered_voter_phrase(geo_label)}, "
+            f"with Republicans holding a {strength}registration edge over Democrats, according to state voter registration data."
+        )
         margin_sentence = (
-            f"Republicans have a registration advantage of {fmt_int(abs(dvr))} voters over Democrats, "
-            f"equal to {fmt_signed_pct(abs(dvr_pct))} percentage points of the electorate."
+            f"{place_registration_phrase(geo_label, name)} has {r_count} registered Republicans, "
+            f"{d_count} Democrats and {oth_count} third-party or unaffiliated voters. "
+            f"Republicans' advantage stands at {fmt_int(abs(dvr))} voters, or {float(abs(dvr_pct)):.1f} percentage points."
         )
 
-    lines = []
-
-    lines.append(
-        f"{name} is a {geo_label.lower()} with {total} registered voters. "
-        f"That includes {d_count} Democrats ({d_pct}), {r_count} Republicans ({r_pct}) "
-        f"and {oth_count} voters registered with another party or no major-party affiliation ({oth_pct})."
-    )
-
-    lines.append(margin_sentence)
+    lines = [
+        lead_sentence,
+        margin_sentence,
+    ]
 
     if turnout_row:
+        if geography_noun(geo_label) == "county":
+            turnout_subject = "currently registered Bucks County voters"
+        elif geography_noun(geo_label) == "polling place":
+            turnout_subject = "currently registered voters assigned to this polling place"
+        elif geography_noun(geo_label) == "precinct":
+            turnout_subject = "currently registered voters in this precinct"
+        elif geography_noun(geo_label) == "state House district":
+            turnout_subject = "currently registered voters in this state House district"
+        elif geography_noun(geo_label) == "state Senate district":
+            turnout_subject = "currently registered voters in this state Senate district"
+        elif geography_noun(geo_label) == "municipality":
+            turnout_subject = f"currently registered voters in {name}"
+        else:
+            turnout_subject = "currently registered voters here"
+
         lines.append(
-            f"In the 2025 municipal election, {fmt_int(turnout_row.get('voted_total'))} voters from this geography cast ballots, "
-            f"for an overall turnout rate of {fmt_pct(turnout_row.get('turnout_pct'))}. "
-            f"Democratic turnout was {fmt_pct(turnout_row.get('D_turnout_pct'))}, "
-            f"Republican turnout was {fmt_pct(turnout_row.get('R_turnout_pct'))}, "
-            f"and turnout among other voters was {fmt_pct(turnout_row.get('Oth_turnout_pct'))}."
+            f"About {fmt_pct(turnout_row.get('turnout_pct'))} of {turnout_subject} also cast a ballot "
+            f"in the 2025 municipal election. That includes {fmt_pct(turnout_row.get('D_turnout_pct'))} "
+            f"of currently registered Democrats, {fmt_pct(turnout_row.get('R_turnout_pct'))} of Republicans "
+            f"and {fmt_pct(turnout_row.get('Oth_turnout_pct'))} of third-party and unaffiliated voters."
         )
 
-    if switcher_row:
-        lines.append(
-            f"Party-switching data shows a net change of {fmt_signed_int(switcher_row.get('D_net'))} for Democrats, "
-            f"{fmt_signed_int(switcher_row.get('R_net'))} for Republicans and "
-            f"{fmt_signed_int(switcher_row.get('Oth_net'))} for other or unaffiliated voters."
-        )
+    participation_sentence = build_participation_sentence(
+        geo_label=geo_label,
+        name=name,
+        participation_row=participation_row,
+    )
+    if participation_sentence:
+        lines.append(participation_sentence)
+
+    switcher_sentence = build_switcher_sentence(switcher_row)
+    if switcher_sentence:
+        lines.append(switcher_sentence)
 
     return "\n\n".join(lines)
 
@@ -195,11 +441,31 @@ def build_dashboard_data():
             if turnout_path.exists():
                 turnout_df = pd.read_csv(turnout_path, low_memory=False)
 
+                # County party file uses "county"; turnout file uses "county_1".
+                # Add a county alias so county summaries can attach turnout stats.
+                if geo_type == "county" and "county" not in turnout_df.columns and "county_1" in turnout_df.columns:
+                    turnout_df["county"] = turnout_df["county_1"]
+
         switcher_df = None
         if config["switcher_file"]:
             switcher_path = SOURCE_DIR / config["switcher_file"]
             if switcher_path.exists():
                 switcher_df = pd.read_csv(switcher_path, low_memory=False)
+
+                # County party file uses "county"; switcher file uses "county_1".
+                # Add a county alias so county summaries can attach switcher stats.
+                if geo_type == "county" and "county" not in switcher_df.columns and "county_1" in switcher_df.columns:
+                    switcher_df["county"] = switcher_df["county_1"]
+
+        participation_df = None
+        if config.get("participation_file"):
+            participation_path = SOURCE_DIR / config["participation_file"]
+            if participation_path.exists():
+                participation_df = pd.read_csv(participation_path, low_memory=False)
+
+                # County party file uses "county"; participation file uses "county_1".
+                if geo_type == "county" and "county" not in participation_df.columns and "county_1" in participation_df.columns:
+                    participation_df["county"] = participation_df["county_1"]
 
         records = []
 
@@ -211,6 +477,9 @@ def build_dashboard_data():
                 continue
 
             display_name = party_row.get(display_col) or key_value
+
+            if geo_type == "county" and str(display_name).strip().lower() == "bucks":
+                display_name = "Bucks County"
 
             if geo_type == "polling_place":
                 address = party_row.get("full_address")
@@ -232,23 +501,18 @@ def build_dashboard_data():
             party_row["_key_value"] = str(key_value)
             party_row["_display_name"] = str(display_name)
 
-            turnout_row = None
-            if turnout_df is not None and key in turnout_df.columns:
-                match = turnout_df[turnout_df[key].astype(str) == str(key_value)]
-                if not match.empty:
-                    turnout_row = row_to_dict(match.iloc[0])
+            turnout_row = find_matching_row(turnout_df, key, key_value)
 
-            switcher_row = None
-            if switcher_df is not None and key in switcher_df.columns:
-                match = switcher_df[switcher_df[key].astype(str) == str(key_value)]
-                if not match.empty:
-                    switcher_row = row_to_dict(match.iloc[0])
+            switcher_row = find_matching_row(switcher_df, key, key_value)
+
+            participation_row = find_matching_row(participation_df, key, key_value)
 
             summary = build_summary(
                 geo_label=config["label"],
                 party_row=party_row,
                 turnout_row=turnout_row,
                 switcher_row=switcher_row,
+                participation_row=participation_row,
             )
 
             records.append({
@@ -257,6 +521,7 @@ def build_dashboard_data():
                 "party": party_row,
                 "turnout": turnout_row,
                 "switcher": switcher_row,
+                "participation": participation_row,
                 "summary": summary,
             })
 
